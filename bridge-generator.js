@@ -191,7 +191,7 @@ async function handleBuild(options, ws, attempt = 1) {
         }
     }
 
-    const command = `npx @nativefier/nativefier "${url}" --name "${finalAppName}" --platform "${platform}" --arch "${arch}" --out "${outputDir}" --overwrite ${extraFlags}`;
+    const command = \`npx @nativefier/nativefier "\${url}" --name "\${finalAppName}" --platform "\${platform}" --arch "\${arch}" --out "\${outputDir}" --overwrite \${extraFlags}\`;
 
     console.log(\`[Attempt \${attempt}] Executing: \${command}\`);
     ws.send(JSON.stringify({ type: 'build_progress', message: \`[Attempt \${attempt}] Build started...\`, requestId }));
