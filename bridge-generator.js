@@ -11,7 +11,7 @@ export function generateAndDownloadBridge() {
     "start:server": "node exe-download-server.js",
     "start": "npm-run-all --parallel start:bridge start:server",
     "test": "echo \\"Error: no test specified\\" && exit 1",
-    "postinstall": "npm ci --ignore-scripts"
+    "postinstall": "npm install --no-optional --ignore-scripts || echo 'Continuing without optional deps'"
   },
   "author": "",
   "license": "ISC",
