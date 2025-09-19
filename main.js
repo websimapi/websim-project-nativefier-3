@@ -102,7 +102,7 @@ function handleManualBuildClick() {
     let url = manualUrlInput.value;
     const platform = manualPlatformSelect.value;
 
-    const websimUrlRegex = /^https:\\/\\/websim\\.com\\/@([^\\/]+)\\/([^\\/]+)/;
+    const websimUrlRegex = /^https:\/\/websim\.com\/@([^/]+)\/([^/]+)/;
     const match = url.match(websimUrlRegex);
 
     if (match) {
