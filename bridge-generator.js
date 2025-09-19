@@ -1,0 +1,336 @@
+export function generateAndDownloadBridge() {
+    const zip = new JSZip();
+
+    const packageJsonContent = `{
+  "name": "websim-nativefier-bridge",
+  "version": "1.3.0",
+  "description": "A local server to build native apps from websim projects.",
+  "main": "index.js",
+  "scripts": {
+    "start:bridge": "node index.js",
+    "start:server": "node exe-download-server.js",
+    "start": "npm-run-all --parallel start:bridge start:server",
+    "test": "echo \\"Error: no test specified\\" && exit 1",
+    "postinstall": "npm ci --ignore-scripts"
+  },
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "archiver": "^7.0.1",
+    "nativefier": "^52.0.0",
+    "npm-run-all": "^4.1.5",
+    "rimraf": "^5.0.7",
+    "ws": "^8.17.1"
+  }
+}
+`;
+
+    const indexJsContent = `
+const WebSocket = require('ws');
+const { exec } = require('child_process');
+const fs = require('fs');
+const path = require('path');
+const { rimraf } = require('rimraf');
+const archiver = require('archiver');
+
+const PORT = 3001;
+const wss = new WebSocket.Server({ port: PORT });
+
+console.log(\`WebSocket bridge listening on ws://localhost:\${PORT}\`);
+
+// Check and install dependencies on startup
+checkDependencies();
+
+wss.on('connection', ws => {
+    console.log('Client connected');
+
+    ws.on('message', message => {
+        try {
+            const data = JSON.parse(message);
+            if (data.type === 'start_build') {
+                console.log('Received build request:', data);
+                handleBuild(data, ws);
+            }
+        } catch (error) {
+            console.error('Failed to parse message:', error);
+            ws.send(JSON.stringify({ type: 'build_error', error: 'Invalid request from client.' }));
+        }
+    });
+
+    ws.on('close', () => {
+        console.log('Client disconnected');
+    });
+});
+
+function checkDependencies() {
+    console.log('Checking system dependencies...');
+    
+    // Check for ImageMagick/GraphicsMagick
+    exec('which convert || which gm', (error, stdout, stderr) => {
+        if (error) {
+            console.log('ImageMagick/GraphicsMagick not found. Installing ImageMagick...');
+            const installCmd = process.platform === 'linux' ? 
+                'sudo apt-get update && sudo apt-get install -y imagemagick' :
+                process.platform === 'darwin' ? 
+                'brew install imagemagick' : 
+                'echo "Please install ImageMagick manually on Windows"';
+            
+            exec(installCmd, (installError) => {
+                if (installError) {
+                    console.warn('Failed to auto-install ImageMagick. You may need to install it manually.');
+                } else {
+                    console.log('ImageMagick installed successfully.');
+                }
+            });
+        } else {
+            console.log('ImageMagick/GraphicsMagick found.');
+        }
+    });
+
+    // Check for wine on Linux when building for Windows
+    if (process.platform === 'linux') {
+        exec('which wine', (error, stdout, stderr) => {
+            if (error) {
+                console.log('Wine not found. Installing wine...');
+                exec('sudo apt-get update && sudo apt-get install -y wine', (installError) => {
+                    if (installError) {
+                        console.warn('Failed to auto-install Wine. You may need to install it manually.');
+                    } else {
+                        console.log('Wine installed successfully.');
+                    }
+                });
+            } else {
+                console.log('Wine found.');
+                // Create wine64 symlink if it doesn't exist
+                exec('which wine64', (wine64Error) => {
+                    if (wine64Error) {
+                        exec('sudo ln -sf $(which wine) /usr/local/bin/wine64', (linkError) => {
+                            if (!linkError) {
+                                console.log('Created wine64 symlink.');
+                            }
+                        });
+                    }
+                });
+            }
+        });
+    }
+}
+
+// Helper: wait X ms
+function sleep(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+// Helper: cleanup old files from dist
+function cleanupOldFiles(distDir, maxAgeMs = 15 * 60 * 1000) {
+    fs.readdir(distDir, (err, files) => {
+        if (err) return;
+        const now = Date.now();
+        files.forEach(file => {
+            const filePath = path.join(distDir, file);
+            fs.stat(filePath, (err, stats) => {
+                if (!err && now - stats.mtimeMs > maxAgeMs) {
+                    fs.unlink(filePath, () => {});
+                }
+            });
+        });
+    });
+}
+
+function zipDirectory(source, out) {
+    const archive = archiver('zip', { zlib: { level: 9 } });
+    const stream = fs.createWriteStream(out);
+
+    return new Promise((resolve, reject) => {
+        archive
+            .directory(source, false)
+            .on('error', err => reject(err))
+            .pipe(stream);
+
+        stream.on('close', () => resolve(out));
+        archive.finalize();
+    });
+}
+
+async function handleBuild(options, ws, attempt = 1) {
+    const { url, platform, arch, appName, requestId } = options;
+    const outputDir = path.join(__dirname, 'builds');
+    const distDir = path.join(__dirname, 'dist');
+    
+    // Ensure directories exist
+    if (!fs.existsSync(outputDir)) fs.mkdirSync(outputDir, { recursive: true });
+    if (!fs.existsSync(distDir)) fs.mkdirSync(distDir, { recursive: true });
+
+    // Sanitize appName and provide a default if it's empty
+    const sanitizedAppName = (appName || 'MyApp').replace(/[^a-zA-Z0-9.-]/g, '');
+    const finalAppName = sanitizedAppName || 'MyApp';
+
+    let extraFlags = '';
+    
+    // Handle cross-platform Windows builds on Linux
+    if (platform === 'windows' && process.platform === 'linux') {
+        extraFlags += ' --no-icon --no-win32metadata';
+        console.log('Building Windows app on Linux - skipping icon conversion and win32 metadata');
+    }
+    
+    // Set environment variable to use 'wine' instead of 'wine64' as a fallback when cross-compiling
+    const env = { ...process.env };
+    if (platform === 'windows' && process.platform !== 'win32') {
+        env.CROSS_SPAWN_WINDOWS_EXE_WINE_COMMAND = 'wine';
+        env.WINE = 'wine';
+        env.WINEPREFIX = path.join(__dirname, '.wine');
+        
+        // Initialize wine prefix if it doesn't exist
+        if (!fs.existsSync(env.WINEPREFIX)) {
+            console.log('Initializing wine prefix...');
+            exec('winecfg', { env }, () => {
+                console.log('Wine prefix initialized.');
+            });
+        }
+    }
+
+    const command = \`npx nativefier "\${url}" --name "\${finalAppName}" --platform "\${platform}" --arch "\${arch}" --out "\${outputDir}" --overwrite \${extraFlags}\`;
+
+    console.log(\`[Attempt \${attempt}] Executing: \${command}\`);
+    ws.send(JSON.stringify({ type: 'build_progress', message: \`[Attempt \${attempt}] Build started...\`, requestId }));
+
+    let buildPath = '';
+    const buildProcess = exec(command, { env });
+
+    buildProcess.stdout.on('data', (data) => {
+        const line = data.toString();
+        console.log(\`stdout: \${line.trim()}\`);
+        // Nativefier logs "App built to <path>, ..."
+        const match = line.match(/App built to (.+?),/);
+        if (match && match[1]) {
+            buildPath = match[1].trim();
+            console.log(\`Detected build path from stdout: \${buildPath}\`);
+        }
+    });
+
+    buildProcess.stderr.on('data', (data) => {
+        console.error(\`stderr: \${data.toString().trim()}\`);
+    });
+
+    buildProcess.on('close', async (code) => {
+        if (code !== 0) {
+            const errorMessage = \`Nativefier process exited with code \${code} (attempt \${attempt})\`;
+            console.error(errorMessage);
+            if (attempt < 3) {
+                ws.send(JSON.stringify({ type: 'build_progress', message: \`Build failed, retrying (\${attempt+1}/3)...\`, requestId }));
+                await sleep(2000);
+                return handleBuild(options, ws, attempt + 1);
+            } else {
+                ws.send(JSON.stringify({ type: 'build_error', error: errorMessage, requestId }));
+                return;
+            }
+        }
+
+        console.log('Nativefier build completed successfully.');
+        ws.send(JSON.stringify({ type: 'build_progress', message: 'Build complete, zipping application...', requestId }));
+
+        if (!buildPath || !fs.existsSync(buildPath)) {
+            const errorMessage = 'Could not find Nativefier output directory. See logs.';
+            console.error(errorMessage);
+            if(buildPath) console.error(\`Detected path "\${buildPath}" does not exist.\`);
+            ws.send(JSON.stringify({ type: 'build_error', error: errorMessage, requestId }));
+            return;
+        }
+
+        const zipName = \`\${finalAppName}_\${platform}_\${Date.now()}.zip\`;
+        const zipPath = path.join(distDir, zipName);
+        console.log(\`Zipping directory: \${buildPath} to \${zipPath}\`);
+
+        try {
+            await zipDirectory(buildPath, zipPath);
+            console.log('Zipping complete.');
+
+            ws.send(JSON.stringify({
+                type: 'build_complete',
+                fileName: zipName,
+                appName: finalAppName,
+                requestId,
+                downloadUrl: \`/download?file=\${encodeURIComponent(zipName)}\`
+            }));
+            console.log('Sent zip info to client.');
+
+            // Clean up build dir
+            await rimraf(buildPath);
+            console.log(\`Cleaned up build directory: \${buildPath}\`);
+
+            // Schedule zip cleanup
+            setTimeout(() => {
+                fs.unlink(zipPath, (err) => {
+                    if (!err) console.log(\`Temp zip removed: \${zipPath}\`);
+                });
+            }, 10 * 60 * 1000); // 10 minutes
+
+            // Also clean up old files
+            cleanupOldFiles(distDir);
+
+        } catch (err) {
+            console.error('Zipping or cleanup failed:', err);
+            ws.send(JSON.stringify({ type: 'build_error', error: 'Zipping the application failed.', requestId }));
+        }
+    });
+}
+`;
+
+    const exeServerContent = `
+const http = require('http');
+const fs = require('fs');
+const path = require('path');
+
+const DIST_DIR = path.join(__dirname, 'dist');
+const PORT = 3002;
+
+const server = http.createServer((req, res) => {
+    // Example: /download?file=MyApp_123456789.zip
+    if (req.url.startsWith('/download?file=')) {
+        const fileName = decodeURIComponent(req.url.split('=')[1] || '');
+        
+        // Basic security check: only allow .zip files from the root of dist
+        if (path.normalize(fileName).includes('..') || !fileName.endsWith('.zip')) {
+            res.writeHead(400);
+            return res.end('Invalid request');
+        }
+
+        const filePath = path.join(DIST_DIR, fileName);
+        if (!fs.existsSync(filePath)) {
+            res.writeHead(404);
+            return res.end('File not found');
+        }
+
+        res.writeHead(200, {
+            'Content-Type': 'application/zip',
+            'Content-Disposition': \`attachment; filename="\${fileName}"\`,
+            'Access-Control-Allow-Origin': '*' // Allow cross-origin requests
+        });
+        fs.createReadStream(filePath).pipe(res);
+    } else {
+        res.writeHead(404);
+        res.end('Not found');
+    }
+});
+
+server.listen(PORT, 'localhost', () => {
+    console.log(\`Download server running at http://localhost:\${PORT}\`);
+});
+`;
+
+    zip.file("package.json", packageJsonContent);
+    zip.file("index.js", indexJsContent);
+    zip.file("exe-download-server.js", exeServerContent);
+    zip.folder("builds");
+    zip.folder("dist");
+
+    zip.generateAsync({ type: "blob" })
+        .then(function(content) {
+            const link = document.createElement('a');
+            link.href = URL.createObjectURL(content);
+            link.download = "websim-bridge.zip";
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+        });
+}
