@@ -159,7 +159,11 @@ function connectToBridge() {
 
     bridgeSocket.onmessage = (event) => {
         const data = JSON.parse(event.data);
-        if (data.type === 'build_complete') {
+        if (data.type === 'build_progress') {
+            const build = activeBuilds[data.requestId];
+            const targetId = build ? build.fromClientId : room.clientId;
+            room.send({ type: 'build_progress', targetClientId: targetId, payload: { message: data.message } });
+        } else if (data.type === 'build_complete') {
             // With the new bridge, the creator gets a direct download link
             // to their local file server. No upload is needed.
             console.log("Build complete, download from local server:", data);
@@ -319,6 +323,10 @@ function setupEventListeners() {
             downloadLink.download = payload.fileName || `${payload.appName}.zip`;
             downloadLinkContainer.classList.remove('hidden');
             disableAllBuildButtons(false);
+        }
+
+        if (type === 'build_progress') {
+            updateStatus(payload.message || 'Building...', Math.min(95, parseInt(progressBar.style.width) + 5 || 20));
         }
 
         if (type === 'build_failed') {
