@@ -9,13 +9,12 @@ export function generateAndDownloadBridge() {
   "scripts": {
     "start:bridge": "node index.js",
     "start:server": "node exe-download-server.js",
-    "start": "concurrently -k -n bridge,server -c auto,auto \\"npm run start:bridge\\" \\"npm run start:server\\""
+    "start": "concurrently -k -n bridge,server -c auto,auto 'npm run start:bridge' 'npm run start:server'"
   },
   "author": "",
   "license": "ISC",
   "engines": { "node": ">=18" },
   "dependencies": {
-    // removed unused deps; forge runs in per-build workDir
     "concurrently": "^8.2.2",
     "rimraf": "^5.0.7",
     "ws": "^8.17.1"
