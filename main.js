@@ -1,3 +1,5 @@
+
+```javascript
 import { generateAndDownloadBridge } from 'bridge-generator';
 
 const room = new WebsimSocket();
@@ -24,6 +26,7 @@ let bridgeSocket = null;
 let activeBuilds = {}; // Key: requestId, Value: { fromClientId }
 let rebootTimer = null;
 let warningTimer = null;
+let generateAndDownloadBridgeFn = null;
 
 function updateBridgeStatusUI(status) {
     if (status === 'connected') {
@@ -47,9 +50,9 @@ function handleRoomStateChange(currentRoomState) {
 async function main() {
     try {
         await room.initialize();
-        
+
         room.subscribeRoomState(handleRoomStateChange);
-        
+
         [creator, currentUser] = await Promise.all([
             window.websim.getCreator(),
             window.websim.getUser()
@@ -60,7 +63,7 @@ async function main() {
             setupCreatorView();
             startRebootTimer(); // Start the auto-reboot system for creators
         }
-        
+
         setupEventListeners();
 
         // Initial check for non-creators
@@ -102,8 +105,8 @@ function startBuild(url, platform, appName) {
 function handleManualBuildClick() {
     let url = manualUrlInput.value;
     const platform = manualPlatformSelect.value;
-    
-    const websimUrlRegex = /^https:\/\/websim\.com\/@([^\/]+)\/([^\/]+)/;
+
+    const websimUrlRegex = /^https:\\/\\/websim\\.com\\/@([^\\/]+)\\/([^\\/]+)/;
     const match = url.match(websimUrlRegex);
 
     if (match) {
@@ -138,8 +141,12 @@ function updateStatus(message, progress) {
 
 function setupCreatorView() {
     creatorPanel.classList.remove('hidden');
-    downloadBridgeBtn.addEventListener('click', () => {
-        generateAndDownloadBridge();
+    downloadBridgeBtn.addEventListener('click', async () => {
+        if (!generateAndDownloadBridgeFn) {
+            const mod = await import('bridge-generator');
+            generateAndDownloadBridgeFn = mod.generateAndDownloadBridge;
+        }
+        generateAndDownloadBridgeFn();
     });
     connectToBridge();
 }
@@ -160,22 +167,22 @@ function connectToBridge() {
             // With the new bridge, the creator gets a direct download link
             // to their local file server. No upload is needed.
             console.log("Build complete, download from local server:", data);
-            
+
             // The build is for another user, notify them.
             // This path is tricky as it assumes the user can reach the creator's machine.
             // For now, we are just implementing the creator-download path.
             const build = activeBuilds[data.requestId];
             if (build && build.fromClientId !== room.clientId) {
-                 room.send({
+                room.send({
                     type: 'build_failed',
                     targetClientId: build.fromClientId,
                     payload: { error: 'Direct download from creator is not yet supported for remote users.' }
                 });
             } else { // It's a build for the creator themselves
-                 room.send({
+                room.send({
                     type: 'build_complete',
                     targetClientId: room.clientId,
-                    payload: { 
+                    payload: {
                         url: `http://localhost:3002${data.downloadUrl}`,
                         appName: data.appName,
                         fileName: data.fileName
@@ -217,26 +224,26 @@ async function uploadAndNotify(file, requestId) {
 
 function startRebootTimer() {
     if (!isCreator) return;
-    
+
     // Clear any existing timers
     if (rebootTimer) clearTimeout(rebootTimer);
     if (warningTimer) clearTimeout(warningTimer);
-    
+
     // Set warning timer for 29 minutes (1 minute before reboot)
     warningTimer = setTimeout(() => {
         // Send warning to all users
         room.send({
             type: 'reboot_warning',
-            payload: { 
+            payload: {
                 message: 'System will restart in 1 minute to maintain connection stability. Please save any work.',
                 timeRemaining: 60
             }
         });
-        
+
         // Show local warning for creator
         showRebootWarning(60);
     }, 29 * 60 * 1000); // 29 minutes
-    
+
     // Set reboot timer for 30 minutes
     rebootTimer = setTimeout(() => {
         console.log('Auto-rebooting to refresh realtime connection...');
@@ -266,15 +273,15 @@ function showRebootWarning(seconds) {
         document.body.appendChild(warningBanner);
         document.body.style.paddingTop = '60px'; // Adjust body padding
     }
-    
+
     const updateWarning = (timeLeft) => {
         warningBanner.textContent = `System will restart in ${timeLeft} seconds to maintain connection stability. Please save any work.`;
-        
+
         if (timeLeft > 0) {
             setTimeout(() => updateWarning(timeLeft - 1), 1000);
         }
     };
-    
+
     updateWarning(seconds);
 }
 
