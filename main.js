@@ -1,7 +1,3 @@
-
-```javascript
-import { generateAndDownloadBridge } from 'bridge-generator';
-
 const room = new WebsimSocket();
 
 const creatorPanel = document.getElementById('creator-panel');
