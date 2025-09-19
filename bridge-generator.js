@@ -3,22 +3,24 @@ export function generateAndDownloadBridge() {
 
     const packageJsonContent = `{
   "name": "websim-nativefier-bridge",
-  "version": "1.3.0",
+  "version": "1.4.0",
   "description": "A local server to build native apps from websim projects.",
   "main": "index.js",
   "scripts": {
     "start:bridge": "node index.js",
     "start:server": "node exe-download-server.js",
-    "start": "npm-run-all --parallel start:bridge start:server",
-    "test": "echo \\"Error: no test specified\\" && exit 1",
+    "start": "concurrently -k -n bridge,server -c auto,auto \\"npm:start:bridge\\" \\"npm:start:server\\"",
     "postinstall": "npm install --no-optional --ignore-scripts || echo 'Continuing without optional deps'"
   },
   "author": "",
   "license": "ISC",
+  "engines": {
+    "node": ">=18"
+  },
   "dependencies": {
     "archiver": "^7.0.1",
-    "nativefier": "^52.0.0",
-    "npm-run-all": "^4.1.5",
+    "@nativefier/nativefier": "^55.1.1",
+    "concurrently": "^8.2.2",
     "rimraf": "^5.0.7",
     "ws": "^8.17.1"
   }
@@ -189,7 +191,7 @@ async function handleBuild(options, ws, attempt = 1) {
         }
     }
 
-    const command = \`npx nativefier "\${url}" --name "\${finalAppName}" --platform "\${platform}" --arch "\${arch}" --out "\${outputDir}" --overwrite \${extraFlags}\`;
+    const command = `npx @nativefier/nativefier "${url}" --name "${finalAppName}" --platform "${platform}" --arch "${arch}" --out "${outputDir}" --overwrite ${extraFlags}`;
 
     console.log(\`[Attempt \${attempt}] Executing: \${command}\`);
     ws.send(JSON.stringify({ type: 'build_progress', message: \`[Attempt \${attempt}] Build started...\`, requestId }));
