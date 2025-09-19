@@ -9,14 +9,11 @@ export function generateAndDownloadBridge() {
   "scripts": {
     "start:bridge": "node index.js",
     "start:server": "node exe-download-server.js",
-    "start": "concurrently -k -n bridge,server -c auto,auto \"npm:start:bridge\" \"npm:start:server\"",
-    "postinstall": "npm install --no-optional --ignore-scripts || echo 'Continuing without optional deps'"
+    "start": "concurrently -k -n bridge,server -c auto,auto \\"npm run start:bridge\\" \\"npm run start:server\\""
   },
   "author": "",
   "license": "ISC",
-  "engines": {
-    "node": ">=18"
-  },
+  "engines": { "node": ">=18" },
   "dependencies": {
     "archiver": "^7.0.1",
     "@electron-forge/cli": "^6.4.2",
